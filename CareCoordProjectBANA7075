@@ -1,0 +1,361 @@
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+patients = pd.read_csv('synthetic_sparksync_full_dataset.csv')
+programs = pd.read_csv('programs_ml_dataset clean.csv')
+
+print("Patients shape:", patients.shape)
+print("Programs shape:", programs.shape)
+
+print("Patients preview:")
+print(patients.head())
+
+print("\nPrograms preview:")
+print(programs.head())
+
+print("Patient columns:")
+print(patients.columns.tolist())
+
+print("\nProgram columns:")
+print(programs.columns.tolist())
+
+print("Patients info:")
+patients.info()
+
+print("\nPrograms info:")
+programs.info()
+
+def clean_column_names(df):
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
+        .str.replace(r"[^\w]", "", regex=True)
+    )
+    return df
+
+patients = clean_column_names(patients)
+programs = clean_column_names(programs)
+
+print("Cleaned patient columns:")
+print(patients.columns.tolist())
+
+print("\nCleaned program columns:")
+print(programs.columns.tolist())
+
+required_patient_cols = [
+    "mrn", "name", "age", "primary_diagnosis",
+    "priority_1", "priority_2", "transition_focus",
+    "coordinator_comfort"
+]
+
+required_program_cols = [
+    "program_name", "location", "length_of_stay", "treatment_specialty",
+    "levels_of_care", "insurance_cost", "acuity_level",
+    "primary_population", "program_type", "continuum_score",
+    "cost_tier", "independence_focus"
+]
+
+missing_patient_cols = [col for col in required_patient_cols if col not in patients.columns]
+missing_program_cols = [col for col in required_program_cols if col not in programs.columns]
+
+print("Missing patient columns:", missing_patient_cols)
+print("Missing program columns:", missing_program_cols)
+
+print("Missing values in patients:")
+print(patients.isnull().sum())
+
+print("\nMissing values in programs:")
+print(programs.isnull().sum())
+
+patients.fillna({
+    "primary_diagnosis": "unknown",
+    "priority_1": "unknown",
+    "priority_2": "unknown",
+    "transition_focus": "unknown",
+    "coordinator_comfort": "unknown"
+}, inplace=True)
+
+programs.fillna({
+    "treatment_specialty": "unknown",
+    "levels_of_care": "unknown",
+    "acuity_level": "unknown",
+    "primary_population": "unknown",
+    "program_type": "unknown",
+    "cost_tier": "unknown",
+    "independence_focus": "unknown"
+}, inplace=True)
+
+print("Missing values after fill:")
+print(patients.isnull().sum())
+print(programs.isnull().sum())
+
+print("Duplicate patient rows:", patients.duplicated().sum())
+print("Duplicate program rows:", programs.duplicated().sum())
+
+if "age" in patients.columns:
+    invalid_age_count = ((patients["age"] < 0) | (patients["age"] > 120)).sum()
+    print("Invalid age count:", invalid_age_count)
+
+text_cols_patients = [
+    "name", "primary_diagnosis", "priority_1",
+    "priority_2", "transition_focus", "coordinator_comfort"
+]
+
+text_cols_programs = [
+    "program_name", "location", "treatment_specialty",
+    "levels_of_care", "acuity_level", "primary_population",
+    "program_type", "cost_tier", "independence_focus"
+]
+
+for col in text_cols_patients:
+    if col in patients.columns:
+        patients[col] = patients[col].astype(str).str.strip().str.lower()
+
+for col in text_cols_programs:
+    if col in programs.columns:
+        programs[col] = programs[col].astype(str).str.strip().str.lower()
+
+patients["join_key"] = 1
+programs["join_key"] = 1
+
+candidate_pairs = pd.merge(patients, programs, on="join_key").drop("join_key", axis=1)
+
+print("Candidate pairs shape:", candidate_pairs.shape)
+print(candidate_pairs.head())
+
+candidate_pairs["diagnosis_match"] = (
+    candidate_pairs["primary_diagnosis"] == candidate_pairs["treatment_specialty"]
+).astype(int)
+
+candidate_pairs["focus_match"] = (
+    candidate_pairs["transition_focus"] == candidate_pairs["independence_focus"]
+).astype(int)
+
+candidate_pairs["priority1_population_match"] = (
+    candidate_pairs["priority_1"] == candidate_pairs["primary_population"]
+).astype(int)
+
+candidate_pairs["match_score"] = (
+    candidate_pairs["diagnosis_match"] +
+    candidate_pairs["focus_match"] +
+    candidate_pairs["priority1_population_match"]
+)
+
+print(candidate_pairs[[
+    "mrn", "name", "program_name",
+    "primary_diagnosis", "treatment_specialty",
+    "match_score"
+]].head(10))
+
+from pathlib import Path
+
+OUTPUT_DIR = Path("data/processed")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+patients.to_csv(OUTPUT_DIR / "patients_clean.csv", index=False)
+programs.to_csv(OUTPUT_DIR / "programs_clean.csv", index=False)
+candidate_pairs.to_csv(OUTPUT_DIR / "candidate_pairs.csv", index=False)
+
+import os
+import pandas as pd
+
+print("Current working directory:")
+print(os.getcwd())
+
+print("\nFiles in data/processed:")
+
+if os.path.exists("data/processed"):
+    print(os.listdir("data/processed"))
+else:
+    print("Folder not found!")
+
+# Try loading each file to confirm it works
+files = [
+    "data/processed/patients_clean.csv",
+    "data/processed/programs_clean.csv",
+    "data/processed/candidate_pairs.csv"
+]
+
+for file in files:
+    try:
+        df = pd.read_csv(file)
+        print(f"\n✅ Loaded {file} successfully. Shape: {df.shape}")
+    except Exception as e:
+        print(f"\n❌ Error loading {file}: {e}")
+
+patients.to_parquet(OUTPUT_DIR / "patients_clean.parquet", index=False)
+programs.to_parquet(OUTPUT_DIR / "programs_clean.parquet", index=False)
+candidate_pairs.to_parquet(OUTPUT_DIR / "candidate_pairs.parquet", index=False)
+
+print("Parquet files saved successfully.")
+
+import pandas as pd
+
+files = [
+    "data/processed/patients_clean.parquet",
+    "data/processed/programs_clean.parquet",
+    "data/processed/candidate_pairs.parquet"
+]
+
+for file in files:
+    df = pd.read_parquet(file)
+    print(f"✅ Loaded {file} successfully. Shape: {df.shape}")
+
+from pathlib import Path
+import mlflow
+import mlflow.pyfunc
+import pandas as pd
+
+
+# -------------------------------
+# 1. Set MLflow tracking location
+# -------------------------------
+PROJECT_DIR = Path.cwd()
+mlflow.set_tracking_uri(f"file:///{PROJECT_DIR.as_posix()}/mlruns")
+mlflow.set_experiment("Patient Program Matching")
+
+
+# -------------------------------
+# 2. Define the MLflow model
+# -------------------------------
+class PatientProgramRecommender(mlflow.pyfunc.PythonModel):
+
+    def load_context(self, context):
+        self.programs = pd.read_csv(context.artifacts["programs_file"])
+
+        # Normalize text columns
+        text_cols = [
+            "program_name",
+            "location",
+            "treatment_specialty",
+            "primary_population",
+            "program_type",
+            "independence_focus",
+        ]
+
+        for col in text_cols:
+            if col in self.programs.columns:
+                self.programs[col] = (
+                    self.programs[col].astype(str).str.strip().str.lower()
+                )
+
+    def _normalize_text(self, value):
+        if pd.isna(value):
+            return "unknown"
+        return str(value).strip().lower()
+
+    def predict(self, context, model_input: pd.DataFrame) -> pd.DataFrame:
+        results_all = []
+
+        for _, row in model_input.iterrows():
+            patient = {k: self._normalize_text(v) for k, v in row.to_dict().items()}
+            programs = self.programs.copy()
+
+            programs["diagnosis_match"] = (
+                programs["treatment_specialty"]
+                == patient.get("primary_diagnosis", "unknown")
+            ).astype(int)
+
+            programs["focus_match"] = (
+                programs["independence_focus"]
+                == patient.get("transition_focus", "unknown")
+            ).astype(int)
+
+            programs["priority1_population_match"] = (
+                programs["primary_population"]
+                == patient.get("priority_1", "unknown")
+            ).astype(int)
+
+            programs["priority2_population_match"] = (
+                programs["primary_population"]
+                == patient.get("priority_2", "unknown")
+            ).astype(int)
+
+            programs["score"] = (
+                3 * programs["diagnosis_match"]
+                + 2 * programs["focus_match"]
+                + 2 * programs["priority1_population_match"]
+                + 1 * programs["priority2_population_match"]
+            )
+
+            top_program = programs.sort_values(
+                by=["score", "continuum_score"],
+                ascending=[False, False]
+            ).iloc[0]
+
+            results_all.append({
+                "recommended_program": top_program["program_name"],
+                "location": top_program["location"],
+                "program_type": top_program["program_type"],
+                "score": float(top_program["score"]),
+            })
+
+        return pd.DataFrame(results_all)
+
+
+# -------------------------------
+# 3. Log model to MLflow
+# -------------------------------
+with mlflow.start_run():
+    mlflow.pyfunc.log_model(
+        name="patient_program_model",
+        python_model=PatientProgramRecommender(),
+        artifacts={
+            "programs_file": "data/processed/programs_clean.csv"
+        },
+        input_example=pd.DataFrame([{
+            "age": 24.0,
+            "primary_diagnosis": "anxiety",
+            "priority_1": "young adult",
+            "priority_2": "unknown",
+            "transition_focus": "independent living",
+            "coordinator_comfort": "high",
+        }]),
+    )
+
+    run_id = mlflow.active_run().info.run_id
+
+    print("✅ Model logged successfully")
+    print(f"Run ID: {run_id}")
+    print(f"Model URI: runs:/{run_id}/patient_program_model")
+
+import os
+print(os.listdir())
+
+import os
+print(os.listdir())
+
+from pathlib import Path
+import mlflow.pyfunc
+import pandas as pd
+
+PROJECT_DIR = Path.cwd()
+MODEL_SAVE_PATH = PROJECT_DIR / "saved_patient_program_model"
+
+mlflow.pyfunc.save_model(
+    path=str(MODEL_SAVE_PATH),
+    python_model=PatientProgramRecommender(),
+    artifacts={
+        "programs_file": str(PROJECT_DIR / "data" / "processed" / "programs_clean.csv")
+    },
+    input_example=pd.DataFrame([{
+        "age": 24.0,
+        "primary_diagnosis": "anxiety",
+        "priority_1": "young adult",
+        "priority_2": "unknown",
+        "transition_focus": "independent living",
+        "coordinator_comfort": "high",
+    }]),
+)
+
+print("Saved model to:", MODEL_SAVE_PATH)
+
+import pandas as pd
+
+df = pd.read_csv("test_batch_data.csv")
+print(df.columns.tolist())
+print(df.head())
+
